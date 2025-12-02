@@ -37,12 +37,10 @@ DOWNLOADER_MIDDLEWARES = {
     "job_scraper.middlewares.JobScraperDownloaderMiddleware": 543,
 }
 
-# Configure item pipelines (lower numbers = higher priority)
+# Configure item pipelines
 ITEM_PIPELINES = {
-    "job_scraper.pipelines.MLDataCleaningPipeline": 100,  # Clean data first
-    "job_scraper.pipelines.JobScraperPipeline": 200,      # Save to database
-    "job_scraper.pipelines.CSVExportPipeline": 300,       # Export to CSV for ML
-    # "job_scraper.pipelines.JsonWriterPipeline": 400,    # Optional JSON export
+    "job_scraper.pipelines.JobScraperPipeline": 300,
+    # "job_scraper.pipelines.JsonWriterPipeline": 400,
 }
 
 # Enable and configure the AutoThrottle extension 

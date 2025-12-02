@@ -14,25 +14,18 @@ import time
 class KeejobSpider(scrapy.Spider):
     """
     Scrapy spider for Keejob using Selenium to handle JavaScript and Cloudflare
-    Scrapes ALL pages (76+) from the website
     """
     name = "keejob"
     allowed_domains = ["keejob.com", "www.keejob.com"]
-    start_urls = ["https://www.keejob.com/offres-emploi/?page=1"]
+    start_urls = ["https://www.keejob.com/offres-emploi/"]
     
     custom_settings = {
         'ROBOTSTXT_OBEY': False,
         'CONCURRENT_REQUESTS': 1,  # Only 1 at a time since we're using Selenium
-        'FEED_URI': 'keejob_all_jobs.csv',
     }
     
-    # Track current page and max pages
-    current_page = 1
-    
-    def __init__(self, max_pages=80, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Allow setting max_pages from command line: scrapy crawl keejob -a max_pages=5
-        self.max_pages = int(max_pages)
         
         # Setup Chrome options
         chrome_options = Options()
@@ -58,12 +51,11 @@ class KeejobSpider(scrapy.Spider):
     def parse(self, response):
         """
         Use Selenium to load and parse the page
-        Scrapes current page and follows pagination to next page
         """
         self.driver.get(response.url)
         time.sleep(5)  # Wait for page and Cloudflare to load
         
-        self.logger.info(f"✅ Page {self.current_page} loaded: {self.driver.title}")
+        self.logger.info(f"✅ Page loaded: {self.driver.title}")
         
         # Wait for job listings to appear
         try:
@@ -71,34 +63,40 @@ class KeejobSpider(scrapy.Spider):
                 EC.presence_of_element_located((By.CSS_SELECTOR, "article"))
             )
         except:
-            self.logger.warning(f"⚠️ Timeout waiting for job listings on page {self.current_page}")
-            return
+            self.logger.warning("⚠️ Timeout waiting for job listings")
         
-        # Scroll to load more jobs on the current page
-        self.logger.info(f"📜 Scrolling page {self.current_page} to load all jobs...")
+        # Scroll to load more jobs (scroll multiple times to load more)
+        self.logger.info("📜 Scrolling to load more jobs...")
         previous_height = 0
-        max_scrolls = 5  # Reduced scrolls since we're paginating
+        max_scrolls = 10  # Maximum number of scrolls to try
         
         for i in range(max_scrolls):
             # Scroll to bottom
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)  # Wait for new jobs to load
+            time.sleep(3)  # Wait for new jobs to load
             
             # Calculate new scroll height and compare with previous
             new_height = self.driver.execute_script("return document.body.scrollHeight")
             
             # Count current jobs
             current_jobs = len(self.driver.find_elements(By.CSS_SELECTOR, "article"))
+            self.logger.info(f"Scroll {i+1}/{max_scrolls}: {current_jobs} jobs loaded")
             
             # If we've reached the bottom (no new content loaded), stop
             if new_height == previous_height:
+                self.logger.info("📍 Reached bottom of page")
                 break
             
             previous_height = new_height
+            
+            # Optional: stop if we have enough jobs (e.g., 50+)
+            if current_jobs >= 50:
+                self.logger.info(f"✅ Loaded {current_jobs} jobs, stopping scroll")
+                break
         
-        # Find all job articles on this page
+        # Find all job articles
         job_articles = self.driver.find_elements(By.CSS_SELECTOR, "article")
-        self.logger.info(f"📋 Page {self.current_page}: Found {len(job_articles)} job listings")
+        self.logger.info(f"📋 Found {len(job_articles)} job listings")
         
         for idx, article in enumerate(job_articles, 1):
             try:
@@ -167,14 +165,15 @@ class KeejobSpider(scrapy.Spider):
                 self.logger.error(f"Error scraping job {idx}: {e}")
                 continue
         
-        # Follow pagination to next page
-        if self.current_page < self.max_pages:
-            self.current_page += 1
-            next_url = f"https://www.keejob.com/offres-emploi/?page={self.current_page}"
-            self.logger.info(f"🔄 Moving to page {self.current_page}: {next_url}")
-            yield scrapy.Request(next_url, callback=self.parse, dont_filter=True)
-        else:
-            self.logger.info(f"✅ Reached max pages ({self.max_pages}). Scraping complete!")
+        # Try to find and follow pagination (if exists)
+        try:
+            next_button = self.driver.find_element(By.CSS_SELECTOR, "a[rel='next'], button.next, a.next-page")
+            next_url = next_button.get_attribute('href')
+            if next_url:
+                self.logger.info(f"Following pagination: {next_url}")
+                yield scrapy.Request(next_url, callback=self.parse)
+        except:
+            self.logger.info("No more pages to scrape")
     
     def clean_item(self, item):
         """Clean and validate item data"""
